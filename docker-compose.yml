@@ -1,0 +1,160 @@
+# ============================================================
+#  Ecommerce Dashboard — Full Local Stack
+# ============================================================
+#
+#  Architecture (write path):
+#    HTTP Client
+#      → api         (write-back cache to Redis, publish to RabbitMQ)
+#      → rabbitmq    (durable queue)
+#      → worker      (consume, write to postgres + elasticsearch)
+#
+#  Architecture (read path):
+#    HTTP Client
+#      → api         (Redis HIT → return; MISS → postgres fallback)
+#
+#  Architecture (search path):
+#    HTTP Client
+#      → api         (proxy to elasticsearch)
+#
+#  Observability:
+#    Kibana → elasticsearch   (explore indexed orders)
+#    RabbitMQ Management UI   (http://localhost:15672, guest/guest)
+#
+#  Usage:
+#    docker compose up --build
+#    docker compose down -v   # also removes named volumes
+# ============================================================
+
+services:
+
+  # ── 1. PostgreSQL — Source of Truth ────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: ecommerce_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: ecommerce
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro  # schema bootstrap
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ecommerce"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── 2. Redis — Write-Back Cache ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: ecommerce_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes  # persist to disk (AOF)
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── 3. RabbitMQ — Message Broker ────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: ecommerce_rabbitmq
+    ports:
+      - "5672:5672"    # AMQP protocol
+      - "15672:15672"  # Management UI  →  http://localhost:15672  (guest/guest)
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── 4. Elasticsearch — Search Engine ────────────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+    container_name: ecommerce_elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false   # disabled for local dev simplicity
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -v '\"status\":\"red\"'"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ── 5. Kibana — ES Observability UI ─────────────────────────────────────────
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.10.2
+    container_name: ecommerce_kibana
+    ports:
+      - "5601:5601"   # UI  →  http://localhost:5601
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  # ── 6. API Service ──────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: ecommerce_api
+    ports:
+      - "8080:8080"
+    environment:
+      POSTGRES_DSN:      "user=postgres password=secret dbname=ecommerce sslmode=disable host=postgres"
+      REDIS_ADDR:        "redis:6379"
+      RABBITMQ_URL:      "amqp://guest:guest@rabbitmq:5672/"
+      ELASTICSEARCH_URL: "http://elasticsearch:9200"
+      API_PORT:          "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: on-failure  # retry until all deps are truly ready
+
+  # ── 7. Worker Service ───────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: ecommerce_worker
+    environment:
+      POSTGRES_DSN:      "user=postgres password=secret dbname=ecommerce sslmode=disable host=postgres"
+      RABBITMQ_URL:      "amqp://guest:guest@rabbitmq:5672/"
+      ELASTICSEARCH_URL: "http://elasticsearch:9200"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: on-failure
+
+# ── Named Volumes ───────────────────────────────────────────────────────────
+# Named volumes survive `docker compose down` (data is not lost).
+# Use `docker compose down -v` to also wipe the data.
+volumes:
+  postgres_data:
+  redis_data:
+  elasticsearch_data:
+  rabbitmq_data:

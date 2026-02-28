@@ -1,0 +1,29 @@
+# Exclude git history and configuration
+.git
+.gitignore
+
+# Exclude build artifacts and temporary files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+dist/
+build/
+bin/
+
+# Exclude locally vendored dependencies (if you use Go modules in the container)
+vendor/
+
+# Exclude editor/IDE specific files
+.idea/
+.vscode/
+.DS_Store
+
+# Exclude environment files or sensitive credentials
+.env
+.aws/
+secrets/
+credentials

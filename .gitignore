@@ -1,0 +1,25 @@
+# Binaries for programs
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, generated with go test -c
+*-test
+*.test
+
+# Output of the go build command
+/bin
+
+# Object files and other intermediate files
+*.cgo1.go
+*.cgo2.c
+_cgo_defun.c
+_cgo_gotypes.go
+_cgo_export.c
+_cgo_export.h
+_obj_dir/
+_test/
+pkg/
+# End of Go specific
