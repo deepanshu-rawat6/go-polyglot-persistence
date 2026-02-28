@@ -1,4 +1,4 @@
-# Ecommerce Dashboard
+# go-polyglot-persistence
 
 A Go project exploring **write-back caching**, **async persistence**, **full-text search**, and **materialized views** — all wired together with Redis, RabbitMQ, PostgreSQL, and Elasticsearch, running locally in Docker.
 
